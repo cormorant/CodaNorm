@@ -47,22 +47,10 @@ WHERE idPrn=?
 AND NameWave LIKE '__m'\
 """
 
-STATIONS = (
-    "HRM", 
-    #"UUD", 
-    #"TRT",
-    #"ZRH",
-    #"MXM",
-    #"FFN",
-    #"KEL",
-    #"VBR",
-)
+STATIONS = ("HRM",)
 
 
 def setup_db_conn(mdbfile):
-    # conAcc = pyodbc.connect(
-    #          'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=Northwind.accdb')
-    #conn_str = "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=%s; Provider=MSDASQL;" % mdbfile
     conn_str = "Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=%s;" % mdbfile
     try:
         conn = pyodbc.connect(conn_str)
@@ -91,24 +79,23 @@ def main():
     data = np.loadtxt(EQ_FILE, delimiter=" ", skiprows=1,
         dtype=[("num", int), ("date", "|S10"), ("time", "|S15"),
         ("lat", float), ("lon", float)])
-    #
     for num, _date, _time, lat, lon in data:
         # дата/время из строк
-        #dt = datetime.datetime.strptime(_date+_time, "%Y%m%d%H:%M:%S.%f")
         dt = datetime.datetime.strptime(_date+_time, "%d.%m.%Y%H:%M:%S.%f")
         # what connection to use? data before 2006 year or after?
         if dt.year < 2006: conn, cursor = conn1, cursor1
         else: conn, cursor = conn2, cursor2
-        #===
         print num, _date, _time,
-        sec = int( abs( (dt - DT0).total_seconds() ) ) # время (в сек) нашего события для поиска
+        # время (в сек) нашего события для поиска
+        sec = int( abs( (dt - DT0).total_seconds() ) )
         # params: date    time interval in seconds
         params = (dt.date(), sec-INTERVAL, sec+INTERVAL)
         # lets find idDir
         prns_dirs = execute_query(cursor, SELECT_PrnsDir, params)
         # what to do if found nothing?
         if not prns_dirs:
-            print#("No events found in DB for %s" % dt)
+            # No events found in DB
+            print
             continue
         # always take first (0) element, but have to check it!
         idDir, Path, UTevent, DateE, TimeE, Energy = prns_dirs[0]
@@ -119,8 +106,8 @@ def main():
         timeP, timeS = None, None
         for id_prn, id_dir, fname, seisfile, K, seismgrStName in prns:
             if not seismgrStName:
-                #print("No seismgrStName, but", id_prn, id_dir, fname, seisfile, K, seismgrStName)
-                continue #not seisfile or seismgrStName
+                # No seismgogramm found
+                continue
             for STATION in STATIONS:
                 if STATION in seismgrStName.upper():
                     # волны; записано станцией station
@@ -129,8 +116,6 @@ def main():
                     for wave in waves:
                         NameWave, TimeWave, komp, Z = wave
                         if NameWave.upper().startswith("E"): continue
-                        #print " ".join(map(str, wave)),
-                        #
                         if NameWave.upper().startswith("P"):
                             timeP = TimeWave
                         elif NameWave.upper().startswith("S"):
@@ -138,14 +123,10 @@ def main():
                         else:
                             pass
                     print timeP, timeS,
-            #==
-            
-        #
         print
 
 
 if __name__ == "__main__":
-    #===
     conn1, cursor1 = setup_db_conn(DB_FILE1)
     conn2, cursor2 = setup_db_conn(DB_FILE2)
     if conn1 is None:
@@ -156,11 +137,7 @@ if __name__ == "__main__":
         sys.exit(1)
     try:
         # установим соединение с бд access
-        # main def
         main()
-    #except BaseException, msg:
-    #   print("An error ocured. Error string is:", msg)
-    # закрыть соединение с бд
     finally:
         conn1.close()
         conn2.close()

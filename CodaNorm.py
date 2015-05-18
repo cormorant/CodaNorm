@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import division
 #
-#  calc_Qcoda_GSE2.py
+#  CodaNorm.py
 #  
 #  Copyright 2014 petr <petr@SEISMOGRAMMA>
 #  
@@ -31,13 +31,12 @@ from __future__ import division
     - алгоритм нормализации.
     - по амплитудным спектрам коды, волн P, S.
 """
-APP_NAME = "coda_gse2"
-__version__="0.0.0.1"
-COMPANY_NAME = 'GIN'
+APP_NAME = "CodaNorm"
+__version__="0.1"
+COMPANY_NAME = 'GIN SB RAS'
 
 import os
 import sys
-#import datetime
 from obspy.gse2.core import isGSE2, readGSE2
 from obspy.core.util.geodetics import gps2DistAzimuth, locations2degrees
 from obspy.signal.rotate import rotate_NE_RT
@@ -117,7 +116,6 @@ def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=
     # открывать исходный файл
     if isGSE2(filename):
         stream = readGSE2(filename)
-        #
     else:
         print("File {} is not in GSE2 format!"),
         return
@@ -139,8 +137,6 @@ def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=
     # rotate here traces 1 and 2 (N, E)
     # будем считать спектры по окну P, S, коде
     for ax, trace in zip(axes, stream.traces):
-        #TODO: if its horizontal cmpn (N, E) - rotate it! before filtering!
-        #print trace
         sr = trace.stats.sampling_rate # sampling rate, 100 Hz normally
         y = butter_bandpass_filter(trace.data, f1, f2, sr)
         # delete mean value

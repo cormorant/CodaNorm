@@ -1,0 +1,11 @@
+backup
+build
+dist
+doc
+out
+*.pyc
+*.pyd
+*.xx
+*.prn
+*.cmd
+*.ico

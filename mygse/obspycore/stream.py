@@ -7,9 +7,9 @@ import os
 import io
 import numpy as np
 
-from mymseed.compatibility import round_away
-from mymseed.obspycore.trace import Trace
-from mymseed.obspycore.utcdatetime import UTCDateTime
+from mygse.compatibility import round_away
+from mygse.obspycore.trace import Trace
+from mygse.obspycore.utcdatetime import UTCDateTime
 
 from collections import OrderedDict
 

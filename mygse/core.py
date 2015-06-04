@@ -8,9 +8,12 @@ import numpy as np
 
 from mygse.obspycore.stream import Stream
 from mygse.obspycore.trace import Trace
-import mygse.libgse2
+#from mygse.libgse2 import isGse2 as _isGse2
+#from mygse.libgse2 import readHeader as _readHeader
+#from mygse.libgse2 import read as _readGSE2
+from mygse.libgse2 import write as _writeGSE2
 
-
+'''
 def isGSE2(filename):
     """
     Checks whether a file is GSE2 or not.
@@ -18,11 +21,10 @@ def isGSE2(filename):
     # Open file.
     try:
         with open(filename, 'rb') as f:
-            libgse2.isGse2(f)
+            _isGse2(f)
     except:
         return False
     return True
-
 
 def readGSE2(filename, headonly=False, verify_chksum=True):
     """ Reads a GSE2 file and returns a Stream object """
@@ -32,17 +34,17 @@ def readGSE2(filename, headonly=False, verify_chksum=True):
         while True:
             try:
                 if headonly:
-                    header = libgse2.readHeader(f)
+                    header = _readHeader(f)
                     traces.append(Trace(header=header))
                 else:
-                    header, data = libgse2.read(f, verify_chksum=verify_chksum)
+                    header, data = _readGSE2(f, verify_chksum=verify_chksum)
                     traces.append(Trace(header=header, data=data))
             except EOFError:
                 break
     return Stream(traces=traces)
+'''
 
-
-def writeGSE2(stream, filename, inplace=False, **kwargs):  # @UnusedVariable
+def writeGSE2(stream, filename, inplace=False):
     """ Write GSE2 file from a Stream object """
     # Translate the common (renamed) entries
     with open(filename, 'wb') as f:
@@ -55,5 +57,5 @@ def writeGSE2(stream, filename, inplace=False, **kwargs):  # @UnusedVariable
                 msg = "GSE2 data must be of type %s, but are of type %s" % \
                     (dt.name, trace.data.dtype)
                 raise Exception(msg)
-            libgse2.write(trace.stats, trace.data, f, inplace)
+            _writeGSE2(trace.stats, trace.data, f, inplace)
 

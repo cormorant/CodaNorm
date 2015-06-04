@@ -1,7 +1,9 @@
 backup
 build
+data
 dist
 doc
+gse2*
 out
 *.pyc
 *.pyd

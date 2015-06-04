@@ -11,11 +11,10 @@ from copy import copy, deepcopy
 import numpy as np
 
 #import compatibility
-from mymseed.compatibility import round_away, getcallargs
+from mygse.compatibility import round_away, getcallargs
 
-from mymseed.obspycore.utcdatetime import UTCDateTime
-from mymseed.obspycore.attribdict import AttribDict
-#from mymseed.obspycore.util.base import createEmptyDataChunk, _getFunctionFromEntryPoint
+from mygse.obspycore.utcdatetime import UTCDateTime
+from mygse.obspycore.attribdict import AttribDict
 
 
 class Stats(AttribDict):

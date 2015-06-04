@@ -9,30 +9,44 @@ APP_NAME = 'baikal2gse'
 import os
 import sys
 import datetime
-from obspy.core import Trace, Stream, UTCDateTime
 import numpy as np
 import argparse
 
 from baikal import BaikalFile
+#TODO: move it code here
 
+from mygse.obspycore.utcdatetime import UTCDateTime
+from mygse.obspycore.stream import Stream
+from mygse.obspycore.trace import Trace
+
+from mygse.core import writeGSE2#, isGSE2
+
+'''
 import re
 _split = re.compile(r'[\0%s]' %
     re.escape(''.join([os.path.sep, os.path.altsep or ''])))
 
 def secure_filename(path):
     return _split.sub('', path)
-
+'''
 
 DEFAULT_STATS = {
-    'network': "",
+    'network': "NT",
     'location': "LOC",
     "calib": 1.0,
+    "gse2": {
+        "lat": 0.,
+        "lon": 0.,
+        "elev": 0.,
+        'coordsys': "WGS84",
+        "edepth": 0.,
+    },
 }
 
 CHANNELS = ("N", "E", "Z")
 
 
-def write_seisan(filename):
+def write_seisan(filename, args):
     """ writes seisan file from baikal one """
     bf = BaikalFile(filename)
     if not bf.valid:
@@ -63,17 +77,17 @@ def write_seisan(filename):
             "npts": data.size,#shape[0]
             'starttime': utcdatetime,
         })
+        # save coordinates
+        stats['gse2']["lat"] = header['latitude']
+        stats['gse2']["lon"] = header["longitude"]
         # создать трассу
         trace = Trace(data=data, header=stats)
         # объединять все в одну трассу
         traces.append(trace)
     # create Stream
     stream = Stream(traces)
+    #===
     # write seisan
-    # path
-    path = os.path.join("gse2", stats["station"], str(stats['starttime'].year))
-    path = secure_filename(path)
-    if not os.path.exists(path): os.makedirs(path)
     #=== filename (using format)
     # date
     name = "{year:04}-{month:02}-{day:02}".format(**header)
@@ -81,8 +95,8 @@ def write_seisan(filename):
     name += "-{t.hour:02}-{t.minute:02}".format(t=stats['starttime'])
     # + station name + Day_of_Year
     name += "{0}__{1:03}".format(stats["station"], stats['starttime'].timetuple().tm_yday)
-    print 'writing', name
-    stream.write(os.path.join(path, name), format='GSE2')
+    print('Writing GSE2 file %s.' % name)
+    writeGSE2(stream, os.path.join(args.outdir, name))#inplace=?
 
 
 def main(args):
@@ -91,27 +105,30 @@ def main(args):
     dirs = args.dirs
     outdir = args.outdir
     if not os.path.exists(outdir): os.makedirs(outdir)
-    '''
-    # times
-    starttime = args.start
-    endtime = args.end
-    # convert to UTCDateTime
-    starttime = str2UTCDateTime(starttime)
-    # decrease starttime in 1 minute?
-    endtime = str2UTCDateTime(endtime)
-    '''
     # create Stream
     stream = Stream()
-    # read mseed files
-    for filename in files:
-        stream += readMSEED(filename, format="MSEED", starttime=starttime, endtime=endtime)
-    # may be there no times: then align stream!
-    starttime = max([trace.stats.starttime for trace in stream])
-    endtime = min([trace.stats.endtime for trace in stream])
-    stream.trim(starttime=starttime, endtime=endtime)
-    # write it!
-    print "Writing {network}_{station}_{location}({starttime}-{endtime})".format(**stream[0].stats)
-    result = write_baikal(stream, args)
+    # can be multiple directories
+    for path in args.dirs:
+        # проверять, ведь нельзя считывать и записывать одну и ту же папку
+        if path == outdir:
+            print("Cannot use same path for reading and writing! Skip...")
+            continue
+        if not os.path.exists(path):
+            print("Path %s not found" % path)
+            continue
+        #===
+        # may be it is file
+        if os.path.isfile(path):
+            write_seisan(path, args)
+        else:
+            # read xx files in each dir
+            files = [os.path.join(path, s) for s in os.listdir(path)]
+            for filename in files:
+                # if not file, warn and skip
+                if not os.path.isfile(filename):
+                    print("%s is not file! Skipping...")
+                else:
+                    write_seisan(filename, args)
 
 
 if __name__ == "__main__":
@@ -126,22 +143,9 @@ if __name__ == "__main__":
     # куда выходные файлы
     parser.add_argument("-o", "--outdir", dest="outdir", default="gse2",
         help="path for output data (default is \"gse2\")")
-    # start from
-    #parser.add_argument("-s", "--start", dest="start",
-    #    help="start time (format \"YYYY-mm-ddTHH:MM:SS\")"
-    #    " like 2015-05-28T07:12:56")
-    # end time
-    #parser.add_argument("-e", "--end", dest="end",
-    #    help="end time (format YYYY-mm-ddTHH:MM:SS)")
-    #== end of parsing parameters
     args = parser.parse_args()
-    print args
-    sys.exit(0)
+    #print args
     #===========================================================================
-    #
-    #TODO: проверять, ведь нельзя считывать и записывать одну и ту же папку
-    #
-    #=== start job
     # convert files in arguments, into one file in Baikal-5 format
     try:
         main(args)

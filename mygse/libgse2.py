@@ -5,7 +5,6 @@
 Lowlevel module internally used for handling GSE2 files.
 """
 from __future__ import division
-#from future.utils import native_str
 
 import ctypes as C
 import doctest
@@ -299,7 +298,6 @@ def write(headdict, data, f, inplace=False):
     headdict['gse2'].setdefault('vang', -1)
     # This is the actual function where the header is written. It avoids
     # the different format of 10.4e with fprintf on Windows and Linux.
-    # For further details, see the __doc__ of writeHeader
     writeHeader(f, headdict)
     f.write(b"DAT2\n")
     for line in data_cm6:

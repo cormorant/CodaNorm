@@ -7,13 +7,11 @@ Lowlevel module internally used for handling GSE2 files.
 from __future__ import division
 
 import ctypes as C
-import doctest
 import warnings
 
 import numpy as np
 
 from mygse.obspycore.utcdatetime import UTCDateTime
-from obspy.core.util.libnames import _load_CDLL
 
 
 # Import shared libgse2

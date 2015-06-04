@@ -21,6 +21,6 @@ setup(
     },
     console=[{'script': 'baikal2gse.py'}],
     data_files=[('.', ['libgse2.pyd'])],
-    #includes=['UserDict', 'UserList', 'UserString', 'warnings', '__future__',
-    #    'future', 'future.builtins'],
+    includes=['UserDict', 'UserList', 'UserString', 'warnings', '__future__',
+        'future', 'future.builtins'],
 )

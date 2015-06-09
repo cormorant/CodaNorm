@@ -336,7 +336,7 @@ if __name__ == '__main__':
                     sheet.write(NumLine+1, col+columns, value)
         print
     # save results
-    # filename must consist StationName, alprithm
+    # filename must consist StationName, algorithm etc
     outfilename = "out_{station}_{algorithm}.xls".format(**Settings)
     try:
         WorkBook.save(outfilename)

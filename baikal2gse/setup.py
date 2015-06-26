@@ -13,10 +13,8 @@ setup(
     options={
         "py2exe":{
             "dll_excludes": ["MSVCP90.dll", "HID.DLL", "w9xpopen.exe",
-                'libifcoremd.dll', ],#'msvcr71.dll'
-            #"ascii": 1, # to make a smaller executable, don't include the encodings
+                'libifcoremd.dll', ],
             "compressed": 0, # compress the library archive
-            #"skip_archive": 1, 
         }
     },
     console=[{'script': 'baikal2gse.py'}],

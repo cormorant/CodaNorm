@@ -19,16 +19,8 @@ from mygse.obspycore.utcdatetime import UTCDateTime
 from mygse.obspycore.stream import Stream
 from mygse.obspycore.trace import Trace
 
-from mygse.core import writeGSE2#, isGSE2
+from mygse.core import writeGSE2
 
-'''
-import re
-_split = re.compile(r'[\0%s]' %
-    re.escape(''.join([os.path.sep, os.path.altsep or ''])))
-
-def secure_filename(path):
-    return _split.sub('', path)
-'''
 
 DEFAULT_STATS = {
     'network': "NT",

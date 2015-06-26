@@ -6,8 +6,8 @@ doc
 gse2
 out
 *.pyc
-*.pyd
 *.xx
 *.prn
 *.cmd
 *.ico
+*.txt

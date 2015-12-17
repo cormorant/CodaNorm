@@ -32,7 +32,7 @@ from __future__ import division
     - по амплитудным спектрам коды, волн P, S.
 """
 APP_NAME = "CodaNorm"
-__version__="0.1"
+__version__="0.2"
 COMPANY_NAME = 'GIN SB RAS'
 
 import os

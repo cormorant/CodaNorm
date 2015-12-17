@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Конвертация данных из формата CSS в Байкал-5.
-Всё должно быть в одном файле (нет зависимостей numpy, obspy)
+Converter of data from a CSS-2 in XX (baikal-5).
 """
 __version__= "0.0.1"
 COMPANY_NAME = 'GIN'
@@ -16,8 +15,8 @@ import argparse
 import operator
 
 # edited obspy's CSS
-from myobspy.css import isCSS, readCSS
-from myobspy.obspycore.stream import Stream
+from obspy.css import isCSS, readCSS
+from obspy.core.stream import Stream
 
 # numpy
 import multiarray as ma
@@ -55,9 +54,7 @@ def dstack(tup):
     return ma.concatenate([atleast_3d(_m) for _m in tup], 2)
 #===
 #=== Baikal-5 format
-# названия каналов
 CHANNELS = ("N", "E", "Z")
-# полные названия каналов
 FULL_CHANNEL_NAMES = ("N-S", "E-W", "Z")
 FULL_CHANNEL_NAMES_DICT = dict(zip(CHANNELS, FULL_CHANNEL_NAMES))
 #=== Baikal-5 (XX) headers
@@ -69,7 +66,6 @@ MainHeaderNames = ('nkan', 'test', 'vers', 'day', 'month', 'year',
     'reserv_short3', 'reserv_short4', 'reserv_short5', 'reserv_short6',
     'station', 'dt', 'to', 'deltas', 'latitude', 'longitude', 'reserv_double1',
     'reserv_double2', 'reserv_long1', 'reserv_long2', 'reserv_long3', 'reserv_long4')
-# значения по умолчанию в заголовке
 DefaultMainHeaderValues = (0, 0, 50, 1, 1, 2000, 12, 0, 0, 24, 0, 0, 0, 0, 0, 0,
     "st", 0.01, 0., 0., 0., 0., 0., 0., 0, 0, 0, 0)
 
@@ -87,7 +83,6 @@ FILENAME_FORMAT = "{0.year:04d}-{0.month:02d}-{0.day:02d}_" +\
 
 def write_baikal(stream, outdir):
     """ write baikal with metadata """
-    # количество каналов/трасс
     nkan = stream.count()
     assert nkan > 0, "Cannot write file with 0 channels!"
     # prepare stream. Here we have "aligned" trace, start/end for traces is same
@@ -117,7 +112,6 @@ def write_baikal(stream, outdir):
     values = [Dic[k] for k in MainHeaderNames]
     s_struct = struct.Struct(MainHeaderStruct)
     #==
-    # nice output
     s = "Write file from {}.".format(starttime)
     sys.stdout.write("\r" + s)
     sys.stdout.flush()
@@ -149,16 +143,11 @@ def write_baikal(stream, outdir):
 
 
 def stream2baikal(stream, args):
-    """ запись в формат Байкал-5 из потока с тремя трассами (N, E, Z) по N минут """
-    # из минут, сколько это в секундах?
+    """ write format Baikal 5 of flow of channels (N, E, Z), by N minutes """
     N = args.minutes * 60
-    # начальное время из трех трасс? взять за максимальное из начал
     starttime = max([trace.stats.starttime for trace in stream])
-    # конечное время - минимальное из всех
     endtime = min([trace.stats.endtime for trace in stream])
-    # дальше цикл, разделяющий на минуты
     end = starttime + N
-    # куда записывать результат (в папку со станцией)
     outdir = os.path.join(args.outdir, str(trace.stats.station))
     # before writing, lets change order of channels: N, E, Z
     if (len(stream) == 3) and \
@@ -182,14 +171,14 @@ def stream2baikal(stream, args):
             if starttime > endtime: break
             stream.trim(starttime=starttime, endtime=endtime)
             sys.stdout.write("\nWrite from {} to {}".format(starttime, endtime))
-            # если последний кучок потока не пустой, записать и его
+            # if last piece
             if stream:
                 write_baikal(stream, outdir)
             break
 
 
 def process_css(filename, args):
-    """ Считывает CSS файл и записывает в ХХ """
+    """ read CSS-file and write ХХ """
     print("Found {}".format(filename))
     # check if it is CSS (header) file
     if not isCSS(filename):
@@ -202,7 +191,7 @@ def process_css(filename, args):
     stream = readCSS(filename)
     # fix smth in traces of stream
     for trace in stream:
-        #= нужны ли калибровочные коэффициенты. Если нет  - заменим их на 1
+        # leave original coefficients or not
         if (not args.savecoef) or (trace.stats.calib == 0.):
             trace.stats.calib = 1.
         # from channel name get 1st 3 elements
@@ -217,7 +206,7 @@ def process_css(filename, args):
             trace.stats.channel = trace.stats.channel[0].upper()
         # may be BH1, BH2 (could be also EH1, EH2?)
         elif "1" in trace.stats.channel:
-            trace.stats.channel = "N" # 1-й канал это N-S
+            trace.stats.channel = "N"
         elif "2" in trace.stats.channel:
             trace.stats.channel = "E"
         else:
@@ -225,7 +214,6 @@ def process_css(filename, args):
                 trace.stats.channel)
     # merge, if needed?
     if args.merge:
-        # объединить трассы по одной и той же станции и каналу
         try:
             stream.merge(method=1, fill_value='latest')
         except BaseException as e:
@@ -245,10 +233,8 @@ def process_css(filename, args):
             # write all traces in stream onto XX files, splitting it, if needed
             stream2baikal(newstream, args)
     else:
-        #=== записывать каждую трассу в отдельный файл ХХ, с соотв 1-й точкой...
         # sort stream by time
         stream.sort(keys=['starttime'])
-        # куда записывать результат (в папку СТАНЦИЯ/КАНАЛ)
         for trace in stream:
             outdir = os.path.join(args.outdir, str(trace.stats.station),
                 str(trace.stats.channel))
@@ -263,14 +249,12 @@ def main(args):
     if not os.path.exists(outdir): os.makedirs(outdir)
     # can be multiple directories
     for path in args.dirs:
-        # проверять, ведь нельзя считывать и записывать одну и ту же папку
         if path == outdir:
             print("Cannot use same path for reading and writing! Skip...")
             continue
         if not os.path.exists(path):
             print("Path %s not found" % path)
             continue
-        #===
         # may be it is file
         if os.path.isfile(path):
             process_css(path, args)
@@ -287,21 +271,15 @@ if __name__ == "__main__":
     #===========================================================================
     # parsers
     parser = argparse.ArgumentParser()
-    # общие парсеры
     parser.add_argument('-V', '--version', action='version', 
         version='%(prog)s.' + __version__)
-    # конвертировать эти файлы
     parser.add_argument("dirs", nargs='+', help="directories to convert")
-    # куда выходные файлы
     parser.add_argument("-o", "--outdir", dest="outdir", default="XX",
         help="path for output data (default is \"XX\")")
-    # save calib coef or not
     parser.add_argument("-s", "--savecoef", dest="savecoef", action="store_true",
         help="Save coefficients in CSS file, or set 1.0")
-    # merge or not
     parser.add_argument("-m", "--merge", dest="merge", action="store_true",
         help="Merge same channels into one trace with interpolating gaps")
-    # по сколько минут писать файлы
     parser.add_argument("-n", "--minutes", dest="minutes", type=int, default=10,
         help="Length of output file (in minutes)")
     #=== endof parsers

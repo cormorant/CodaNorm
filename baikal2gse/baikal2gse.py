@@ -13,13 +13,12 @@ import numpy as np
 import argparse
 
 from baikal import BaikalFile
-#TODO: move it code here
 
-from mygse.obspycore.utcdatetime import UTCDateTime
-from mygse.obspycore.stream import Stream
-from mygse.obspycore.trace import Trace
+from obspy.core import UTCDateTime
+from obspy.core import Stream
+from obspy.core import Trace
 
-from mygse.core import writeGSE2
+from obspy.gse2 import writeGSE2
 
 
 DEFAULT_STATS = {
@@ -53,13 +52,10 @@ def write_seisan(filename, args):
     # make utc datetime
     utcdatetime = UTCDateTime(date.year, date.month, date.day,
         _time.hour, _time.minute, _time.second, _time.microsecond, precision=3)
-    # названия каналов в выходном файле (N, E, Z)
     bf.traces = bf.traces.astype(np.int32)
-    #! Берём первые три (3) канала. Грубые каналы отбрасываются
     bf.traces = bf.traces[:3]
     traces = []
     for channel, data in zip(CHANNELS, bf.traces):
-        # подготовить заголовок
         stats = DEFAULT_STATS.copy()
         stats.update({
             "station": header['station'].upper()[:3],
@@ -72,15 +68,11 @@ def write_seisan(filename, args):
         # save coordinates
         stats['gse2']["lat"] = header['latitude']
         stats['gse2']["lon"] = header["longitude"]
-        # создать трассу
         trace = Trace(data=data, header=stats)
-        # объединять все в одну трассу
         traces.append(trace)
     # create Stream
     stream = Stream(traces)
-    #===
-    # write seisan
-    #=== filename (using format)
+    #== write seisan
     # date
     name = "{year:04}-{month:02}-{day:02}".format(**header)
     # time
@@ -88,7 +80,7 @@ def write_seisan(filename, args):
     # + station name + Day_of_Year
     name += "{0}__{1:03}".format(stats["station"], stats['starttime'].timetuple().tm_yday)
     print('Writing GSE2 file %s.' % name)
-    writeGSE2(stream, os.path.join(args.outdir, name))#inplace=?
+    writeGSE2(stream, os.path.join(args.outdir, name))
 
 
 def main(args):
@@ -101,14 +93,12 @@ def main(args):
     stream = Stream()
     # can be multiple directories
     for path in args.dirs:
-        # проверять, ведь нельзя считывать и записывать одну и ту же папку
         if path == outdir:
             print("Cannot use same path for reading and writing! Skip...")
             continue
         if not os.path.exists(path):
             print("Path %s not found" % path)
             continue
-        #===
         # may be it is file
         if os.path.isfile(path):
             write_seisan(path, args)
@@ -125,18 +115,13 @@ def main(args):
 
 if __name__ == "__main__":
     #===========================================================================
-    # parsers
     parser = argparse.ArgumentParser()
-    # общие парсеры
     parser.add_argument('-V', '--version', action='version', 
         version='%(prog)s.' + __version__)
-    # конвертировать эти файлы
     parser.add_argument("dirs", nargs='+', help="directories to convert")
-    # куда выходные файлы
     parser.add_argument("-o", "--outdir", dest="outdir", default="gse2",
         help="path for output data (default is \"gse2\")")
     args = parser.parse_args()
-    #print args
     #===========================================================================
     # convert files in arguments, into one file in Baikal-5 format
     try:

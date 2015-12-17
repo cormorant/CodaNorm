@@ -24,12 +24,8 @@ from __future__ import division
 #  
 
 """
-Программа расчета коды сейсмограммы по всем (?) каналам.
-Входной формат данных - GSE2.
-
-Расчет коды осуществляется по 2-м алгоритмам:
-    - алгоритм нормализации.
-    - по амплитудным спектрам коды, волн P, S.
+Body-wave attenuation calculation by coda-normalization method.
+Input data format GSE2.
 """
 APP_NAME = "CodaNorm"
 __version__="0.2"
@@ -67,7 +63,7 @@ else:
 
 
 def calc_spectrum(y, dt):
-    """ calc spectrum """
+    """ spectrum calculation  """
     _len = y.size
     half = int(_len/2)#np.ceil
     freqs = np.fft.fftfreq(_len, d=dt)
@@ -92,28 +88,27 @@ def butter_bandpass_filter(data, lowcut, highcut, fs, order=4):
 
 
 def calc_seconds_from_time(_timeStr):
-    """ вычисляет время в секундах с начала дня из текстового времени """
+    """ calculates seconds since the beginning of the day from a text time """
     hour, minute, second = map(float, _timeStr.split(":"))
     return hour * 3600 + minute * 60 + second
 
 
 def calc_power(P, S, C):
-    """ 
-    На входе - спектры в окнах отфильтрованных значений (P, S, кода).
-    Среднеквадратическая оценка спектра
+    """ RMS spectrum estimation.
+    Input - spectrum in windows (filtered values P, S, coda).
     """
     return [np.sqrt( np.sum(np.power(a, 2)) / a.size ) for a in (P, S, C)]
 
 
 def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=None):
-    """ расчет параметров коды """
+    """ calculation itself """
     # plot or not
     PLOT = Settings["plot"]
     if not matplotlib_is_imported: PLOT = False
     # LENGTH OF WINDOWS and KOEF
     SD = Settings["sd"]
     KOEF = Settings["koef"]
-    # открывать исходный файл
+    # open ofiginal GSE2 file
     if isGSE2(filename):
         stream = readGSE2(filename)
     else:
@@ -135,9 +130,9 @@ def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=
         axes = np.arange(3)
     #=== calculating
     # rotate here traces 1 and 2 (N, E)
-    # будем считать спектры по окну P, S, коде
+    # calculate the spectra of the window P, S, coda
     for ax, trace in zip(axes, stream.traces):
-        sr = trace.stats.sampling_rate # sampling rate, 100 Hz normally
+        sr = trace.stats.sampling_rate # sampling rate
         y = butter_bandpass_filter(trace.data, f1, f2, sr)
         # delete mean value
         y -= y.mean()
@@ -149,13 +144,13 @@ def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=
             ax.set_ylim(y.min(), y.max())
             ax.legend()
         #===
-        # за 0 берем время начала файла
+        # 0 -- start time of the file
         secondsStart = calc_seconds_from_time(trace.stats.starttime.time.strftime("%H:%M:%S.%f"))
-        # assert check, если файл начинается после события - что делать?
+        # if the file starts after the event
         if secondsStart > secondsE:
             print("File {} starts after Event!"),
             return
-        # уменьшим времена в секундах относительно начала файла
+        # reduce the time in seconds from the beginning of the file
         timeE = secondsE - secondsStart
         timeP = secondsP - secondsStart
         timeS = secondsS - secondsStart
@@ -171,7 +166,7 @@ def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=
             # mark coda
             ax.axvline(x=timeCoda, linestyle="-", color="r") # coda
             ax.axvline(x=timeCoda+SD, linestyle="-", color="r") # coda
-        #=== все вычисления по данной компоненте
+        #=== calculations for component
         #= window for P
         Pindex1 = int( np.ceil(timeP * sr) )
         Pindex2 = int( Pindex1 + SD * sr )
@@ -181,21 +176,20 @@ def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=
         Sindex2 = int( Sindex1 + SD * sr )
         Swindow = y[Sindex1:Sindex2] # S
         # C - кода
-        #TODO: add an option to change this multiplier (originally 2.5)
         coda_index1 = int(np.ceil(KOEF * (timeS - timeE)) * sr + np.ceil(timeE * sr))
         coda_index2 = int(coda_index1 + SD * sr)
-        # вырезаный по индексам массив с кодой
+        # coda array
         coda_window = y[coda_index1:coda_index2]
         if not coda_window.size:
             print("Not enough time for coda to cut!"),
             return
         #=== spectrums or just normalize
-        # считать средне-квадр. значения по спектру
+        # calc RMS values of spectrum
         if "SPECTR" in Settings["algorithm"].upper():
             freqs, valuesP = calc_spectrum(Pwindow, trace.stats.delta) # P
             freqs, valuesS = calc_spectrum(Swindow, trace.stats.delta) # S
             freqs, valuesC = calc_spectrum(coda_window, trace.stats.delta) # C
-        # или по исходным данным
+        # or by amplitudes
         else:
             valuesP, valuesS, valuesC = Pwindow, Swindow, coda_window
         # calc result on windows
@@ -203,7 +197,6 @@ def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=
     # plot details
     if PLOT:
         ax.set_xlim(timeE-10, timeCoda + SD + 10)
-        #plt.show()
         outfilename = "{}_{}.png".format(filename, Freq)
         plt.savefig(outfilename)
         plt.close()
@@ -215,11 +208,9 @@ def read_config_file(config_filename):
     config.read(config_filename)
     # read main options
     Settings = dict( (k, v) for k, v in config.items("main") )
-    # длина окна - целое число
     Settings['sd'] = int(Settings['sd'])
     # koef
     Settings['koef'] = float(Settings['koef'])
-    # координаты - веществ число
     for k in ("station_lat", "station_lon"): Settings[k] = float(Settings[k])
     # freqs
     Settings["freqs"] = map(float, Settings["freqs"].split())
@@ -229,37 +220,26 @@ def read_config_file(config_filename):
 
 
 if __name__ == '__main__':
-    #===
-    # Для каждой записи получить:
-    # времена события (задается во входном каталоге)
-    # - время вступления волны P для данной станции
-    # - время вступления волны S для данной станции
-    # - имя файла для обработки, откуда считывать данные
-    #=== считывание файла настроек
-    #try:
     Settings = read_config_file("coda.conf")
-    #except NoSectionError
     InputFile = Settings["input_file"]
     if not os.path.exists(InputFile):
         print("Input file to found!")
         sys.exit(1)
-    # загрузить входной файл (guess types in file, hoping for the best)
+    # load input file
     data = np.genfromtxt(InputFile, dtype=None, autostrip=True, names=True,
         loose=True, invalid_raise=False)
     names = data.dtype.names
-    # проверить что все нужные столбцы в файле есть
+    # check that all the columns is in the file
     for col in ("TIME_E", "TIME_P", "TIME_S", "FILENAME"):
         if not col in names:
             print("Coulmn {} not found in input file. Check it!".format(col))
             sys.exit(1)
     #===
-    # собирать значения и сохранять в файл Эксель
     WorkBook = xlwt.Workbook()#encoding="utf8")
     Freqs = Settings["freqs"]
     # add sheets with Freq as name
     sheets = [ WorkBook.add_sheet(str(freq)) for freq in Freqs ]
     #=== write headers on every sheet
-    # если есть настройки с координатами, и во входном файле есть коорд
     if ("station_lat" in Settings.keys() and "station_lon" in Settings.keys()) \
         and ("LAT" in names and "LON" in names):
         has_coords_key = True
@@ -267,25 +247,20 @@ if __name__ == '__main__':
         names = list(names) + ["DIST_KM", "DIST_DEGR", "AZIMUTH_AB", "AZIMUTH_BA"]
     else:
         has_coords_key = False
-    # сколько столбцов занято под исходные данные = кол-во names
     columns = len(names)
-    # заголовки на каждом листе
     for sheet in sheets:
         for col, name in enumerate(names):
             sheet.write(0, col, name)
-    # записать остальные заголовки для каналов и названий окон P, S, C
-    # три канала, три окна: P_N, S_N, C_N
     headers = ["%s_%s" % (w, ch) for ch in ("NS", "EW", "Z") for w in ("P", "S", "C")]
     for sheet in sheets:
         for col, header in enumerate(headers):
             sheet.write(0, col+columns, header)
     #=== main section
     plot = Settings["plot"]
-    # просматривать входной файл построчно
+    # view the input file line by line
     for NumLine, line in enumerate(data):
-        # обрабатывать данные по событию
         parts = dict(zip(names, line))
-        # разобрать параметры
+        # analyze parameters
         filename = parts["FILENAME"]
         str_timeE = parts["TIME_E"]
         str_timeP = parts["TIME_P"]
@@ -298,15 +273,14 @@ if __name__ == '__main__':
             print("Time P must be after time of Event for {}"),
             continue
         #==
-        # для всех частот считать...
+        # for every frequency, calc...
         for NumFreq, Freq in enumerate(Freqs):
-            # подсчитать границы от центральной частоты, low and high freq corners
+            # low and high freq corners
             f1, f2 = 0.5 * Freq, 1.5 * Freq
             #===
-            # подготовить, куда писать результаты
             sheet = sheets[NumFreq]
             if has_coords_key:
-                # считать расстояние, азимуты от события до станции (или наоборот?)
+                # calculate distances, azimuths from the event to the station
                 lat, lon = parts["LAT"], parts["LON"]
                 # gps2DistAzimuth(lat1, lon1, lat2, lon2)
                 dist, azAB, azBA = gps2DistAzimuth(Settings["station_lat"],
@@ -318,7 +292,7 @@ if __name__ == '__main__':
                 # write distances to sheet
                 for col, item in enumerate([dist, dist_degr, azAB, azBA]):
                     sheet.write(NumLine+1, col+columns-4, item)
-            # исходные данные из каталога
+            # raw data from the directory
             for col, item in enumerate(line):
                 sheet.write(NumLine+1, col, item)
             #=== calculations
@@ -329,9 +303,7 @@ if __name__ == '__main__':
                 print e,
                 result = None
             #=== calculations ended
-            # выводить значения по каналам, результат
             if result is not None:
-                #print " ".join(map(str, result)),
                 for col, value in enumerate(result):
                     sheet.write(NumLine+1, col+columns, value)
         print
@@ -340,6 +312,5 @@ if __name__ == '__main__':
     outfilename = "out_{station}_{algorithm}.xls".format(**Settings)
     try:
         WorkBook.save(outfilename)
-        #print
     except IOError, e:
         print(e)

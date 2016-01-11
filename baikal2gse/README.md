@@ -1,7 +1,7 @@
 baikal2gse
 ===
 
-**Программа для конвертации данных из формата Байкал-5 (ХХ) в GSE2**
+**A program to convert the data format Baikal-5 (ХХ) into GSE2**
 
 ### Abstract
 
@@ -11,7 +11,7 @@ Waveforms of earthquakes recorded are stored in a regional format Baykal-5. This
 
 ### Использование программы
 
-Просмотр всех опций доступен с помощью команды
+View all of the options available with the command
 
 **baikal2gse.exe -h**
 
@@ -19,11 +19,11 @@ Waveforms of earthquakes recorded are stored in a regional format Baykal-5. This
 
 baikal2gse.py [-h] [-V] [-o OUTDIR] dirs [dirs ...]
 
-обязательные аргументы:
-  dirs                  путь к данным в формате Байкал
+required arguments:
+  dirs                  path to directory with waveform data (Baikal-5)
 
-опциональные аргументы:
-  -h, --help            справка
-  -V, --version         версия программы
+optional arguments:
+  -h, --help            help
+  -V, --version         version
   -o OUTDIR, --outdir OUTDIR
-                        путь для сохранения выходных данных (по умолчанию "gse2")
+                        the path to save the output data (default is "gse2")

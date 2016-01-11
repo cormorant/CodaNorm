@@ -9,7 +9,7 @@ Waveforms of earthquakes recorded are stored in a regional format Baykal-5. This
 
 
 
-### Использование программы
+### Usage
 
 View all of the options available with the command
 

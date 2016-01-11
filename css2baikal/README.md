@@ -1,41 +1,39 @@
 css2baikal
 ===
 
-**Программа для конвертации данных из формата CSS в Байкал-5 (ХХ)**
+**A program to convert the data format CSS-3.0 into Байкал-5 (ХХ)**
 
-### Использование программы
+### Usage
 
-Просмотр всех опций доступен с помощью команды
+View all available options with the command
 
 **css2baikal.exe -h**
 
-или
+or
 
 **css2baikal.exe --help**
 
-Запуск конвертации данных CSS в указанной папке:
+Run data conversion from CSS-3.0 in a specified folder:
 
-**css2baikal.exe ПАПКА_КСС**
+**css2baikal.exe FOLDER_CSS**
 
-например
+for example:
 
 **css2baikal.exe ORYE**
 
-найдёт все файлы для конвертации в этой папке и запишет результат в папку ХХ (по умолчанию).
-Для указания выходной папки используется опция **-o (--out)**.
+Will find all file for converting in folder ORYE and save the result in folder XX (by default).
+To specify the output folder option is used **-o (--out) option**.
 
-Другие опции:
+Other options:
 
 **-m (--merge)**
 
-Файлы по каждой станции и каналу будут собъединены, пропуски будут заполнены, выходные файлы разобьются по N минут (по умолчанию 10 минут, опция **-n** меняет длину одного файла).
+Files for each station and the channel will be combined, the output files will break for N minutes (default 10 minutes, an option ** - n ** changes the length of the file).
 
-Команда
+Command:
 
 **css2baikal.exe ORYE -m**
 
-запишет файлы со всеми объединенными каналами в выходную папку + ORYE.
+Will write files from all channels combined in the output folder + ORYE.
 
-Если не указывать опцию **"-m"**, будут записаны отдельные файлы для каждого канала по всем станциям, получится отдельный ХХ-файл в папке СТАНЦИЯ/КАНАЛ.
-
-Имя выходных файлов записывается в виде **'ГОД-МЕСЯЦ-ДЕНЬ-Ч-М-С.хх'**.
+Name output files will be written in format **'Y-M-D-H-M-S.f'**.

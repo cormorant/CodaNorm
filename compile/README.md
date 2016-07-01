@@ -6,3 +6,4 @@ Win-32 compiled executables
 * 19.06.2015  12:27        distCodaNorm.rar      CodaNorm program
 * 02.06.2015  12:12        distMseed2XX.rar      miniseed2baikal converter
 * 03.08.2015  12:04        distCalcEnvelope.rar  Envelope calc (bt-bp filter on central frequencies)
+* 25.01.2016  17:00        distGraphEnvelope.rar Graphical program for envelope calculation

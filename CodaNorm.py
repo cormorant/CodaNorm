@@ -33,7 +33,10 @@ COMPANY_NAME = 'GIN SB RAS'
 
 import os
 import sys
-from obspy.gse2.core import isGSE2, readGSE2
+#from obspy.gse2.core import isGSE2, readGSE2
+from obspy import read as readGSE2
+def isGSE2(): return True
+
 from obspy.core.util.geodetics import gps2DistAzimuth, locations2degrees
 from obspy.signal.rotate import rotate_NE_RT
 

@@ -57,7 +57,7 @@ except ImportError, e:
 
 try:
     import matplotlib.pyplot as plt
-except ImportError, e:
+except ImportError as e:
     print e
     matplotlib_is_imported = False
 else:

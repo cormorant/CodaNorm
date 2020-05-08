@@ -17,7 +17,7 @@ The software package CodaNorm is an open source seismological software and it is
 
 Python installed to run the program (version 2.6 or more) is required [http://python.org].
 Python 3 with Obspy installed (since version 0.10.1) is supported.
-Installing Obspy implies Numpy, Scipy and Matplotlib libraries. For details on installing Obspy, please, consult the [official guide] (https://github.com/obspy/obspy/wiki).
+Installing Obspy implies Numpy, Scipy and Matplotlib libraries. For details on installing Obspy, please, consult the [official guide](https://github.com/obspy/obspy/wiki).
 
 CodaNorm program compiled executables are available for Windows 32-bit. To start them Python with libraries installed is not required.
 

@@ -35,10 +35,11 @@ import os
 import sys
 #from obspy.gse2.core import isGSE2, readGSE2
 from obspy import read as readGSE2
-def isGSE2(): return True
+def isGSE2(filename): return True
 
-from obspy.core.util.geodetics import gps2DistAzimuth, locations2degrees
-from obspy.signal.rotate import rotate_NE_RT
+#from obspy.core.util.geodetics import gps2DistAzimuth, locations2degrees
+from obspy.geodetics.base import gps2dist_azimuth as gps2DistAzimuth, locations2degrees
+#from obspy.signal.rotate import rotate_NE_RT
 
 import numpy as np
 from scipy.signal import butter, lfilter
@@ -96,11 +97,9 @@ def calc_seconds_from_time(_timeStr):
     return hour * 3600 + minute * 60 + second
 
 
-def calc_power(P, S, C):
-    """ RMS spectrum estimation.
-    Input - spectrum in windows (filtered values P, S, coda).
-    """
-    return [np.sqrt( np.sum(np.power(a, 2)) / a.size ) for a in (P, S, C)]
+def calc_power(P, S, C, power=2):
+    """ RMS estimation """
+    return [np.sqrt(np.mean(a ** power)) for a in (P, S, C)]
 
 
 def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=None):
@@ -151,7 +150,7 @@ def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=
         secondsStart = calc_seconds_from_time(trace.stats.starttime.time.strftime("%H:%M:%S.%f"))
         # if the file starts after the event
         if secondsStart > secondsE:
-            print("File {} starts after Event!"),
+            print("File %s starts after Event!" % filename),
             return
         # reduce the time in seconds from the beginning of the file
         timeE = secondsE - secondsStart
@@ -201,7 +200,8 @@ def main(Freq, f1, f2, filename, secondsE, secondsP, secondsS, Settings, rotate=
     if PLOT:
         ax.set_xlim(timeE-10, timeCoda + SD + 10)
         outfilename = "{}_{}.png".format(filename, Freq)
-        plt.savefig(outfilename)
+        #plt.savefig(outfilename)
+        plt.show()
         plt.close()
     return result
 

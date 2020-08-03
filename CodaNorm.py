@@ -60,26 +60,11 @@ from scipy.stats.stats import pearsonr
 from CodaNormLib import (STATIONS, linear_fit, read_settings, RMS, 
     calc_signal_noise_ratio, get_waveforms)
 
-#import json
-
 # command line arguments may override default settings from `coda.conf` file
 import argparse
 
 # grapihcs
 import matplotlib.pyplot as plt
-#from matplotlib import mlab
-
-#from itertools import cycle
-#COLORS = cycle(("g", "c", "r"))
-
-# This doesnt work:
-#import warnings
-#def fxn():
-#    warnings.warn("deprecated", FutureWarning)#
-#
-#with warnings.catch_warnings():
-#    warnings.simplefilter("ignore")
-#    fxn()
 
 
 CHANNELS = ("N", "E", "Z")
@@ -125,17 +110,6 @@ def get_Tabs_and_alpha(dist):
         Tcoda = 128
     else:
         raise NotImplementedError("Must choose DIST to calc from range '1-3'")
-     
-    #! also Geom. spreadin will change:
-    #ALPHA = Settings["alpha"]
-    # Alpha - parameter of geom. spreading, depends on Distance we calc:
-    # for R <= 100, alpha = -1 (but for R between 60 and 100, R always == 60)
-    # for R > 100, alpha = -0.5
-    
-    #ALPHA = -0.5 if dist == 3 else -1
-    
-    # alpha = -0.5 also for low freqs, and for all with dist > 100km
-    #ALPHA = -0.5 if dist > 100 else -1
     ALPHA = ALPHA2 if dist > 100 else ALPHA1
     
     return Tcoda, ALPHA
@@ -187,7 +161,6 @@ def calculate(Freq, f1, f2, stream,
         # `dt_Coda` - is UTCDatetime obj that saves Absolute time of Coda-window
         dt_Coda = dt + Tcoda
     
-    #dt_Coda = dt_Coda_shouldbe
     # seconds
     seconds_Coda1 = dt_Coda - T0
     seconds_Coda2 = seconds_Coda1 + SD
@@ -204,13 +177,6 @@ def calculate(Freq, f1, f2, stream,
     # check: S-window and Coda-window may intersects!
     if (seconds_Coda1 - seconds_S) < SD1:
         print("\nWindow S and Coda intersects for %s!!!" % dt)
-        # save data aboutIntersections
-        '''
-        _f = open("intersects.txt", "a")
-        s = "%s\t%s (P=%s, S=%s)\n" % (STATION, dt, dt_P, dt_S)
-        _f.write(s)
-        _f.close()
-        '''
         return
 
     # get results for this filename at this freqs
@@ -804,7 +770,7 @@ if __name__ == '__main__':
         save_to_dir = os.path.join("img", STATION)
         if not os.path.exists(save_to_dir): os.makedirs(save_to_dir)
         outfilename = os.path.join(save_to_dir, "{0:02d}__{1}_{2}_{3}.png".format(freq_num+1, STATION, Settings["channel"], int(Freq)))
-        #plt.savefig(outfilename)
+        
         plt.show()
         plt.close()
 

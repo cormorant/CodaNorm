@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-#from __future__ import division, print_function
+from __future__ import division, print_function
 #
 #  CodaNorm.py
 #  
@@ -22,43 +22,31 @@
 #  MA 02110-1301, USA.
 #  
 #  
-"""
-Программа расчета среднеквадратических амплитуд прямых волн и коды сейсмограмм.
-Входной формат данных - GSE2 (опционально, добавить MSEED, исходный Байкал-5).
 
-Расчет осуществляется по 2-м алгоритмам:
-    - алгоритм нормализации.
-    - по амплитудным спектрам коды, волн P, S.
-UPDATE:
-    - добавлен(?) метод огибающей коды
-
-UPDATE 2020-06-25:
-    - added command line arguments, in order to переопределять "coda.conf" params
-    
-"""
 APP_NAME = "CodaNorm"
-__version__="0.2.0.1"
+__version__="0.2.0.2"
 COMPANY_NAME = 'GIN SB RAS'
 
 import os
 import sys
 import time
 import datetime
-#import math
+import math
+import warnings
+warnings.filterwarnings("ignore", message='Comparing UTCDateTime objects of different precision is not defined will raise an Exception in a future version of obspy')
 
 import obspy
-from obspy import UTCDateTime, Trace, Stream, read as read_mseed, read_inventory
+from obspy import UTCDateTime, Trace, Stream, read as read_mseed
 from obspy.geodetics.base import gps2dist_azimuth
-#from obspy.signal.invsim import simulate_seismometer, corn_freq_2_paz
-#for evelope calculations
-import obspy.signal
 
 import numpy as np
+
+from scipy.signal import find_peaks
 from scipy.stats.stats import pearsonr
 
 # CodaNormlib code
 from CodaNormLib import (STATIONS, linear_fit, read_settings, RMS, 
-    calc_signal_noise_ratio, get_waveforms)
+    calc_signal_noise_ratio, get_waveforms, remove_response)
 
 # command line arguments may override default settings from `coda.conf` file
 import argparse
@@ -69,16 +57,14 @@ import matplotlib.pyplot as plt
 
 CHANNELS = ("N", "E", "Z")
 
-CONST_Tp_Ts = 1.7
+CONST_Tp_Ts = 1.76 # Vp/Vs constant for region, about 1.7-1.8
 
 
 def module_path():
     ''' add link to where this coda is stolen '''
     if hasattr(sys, "frozen"):
         return os.path.dirname(sys.executable)
-        #return os.path.dirname(unicode(sys.executable, sys.getfilesystemencoding( )))
     return os.path.dirname(__file__)
-    #return os.path.dirname(unicode(__file__, sys.getfilesystemencoding( )))
 
 
 # get current dir, may vary if run from EXE file
@@ -87,85 +73,83 @@ CurrDir = module_path()
 CONFIG_FILENAME = os.path.join(CurrDir, "coda.conf")
 
 #===============================================================================
-
-
-def get_Tabs_and_alpha(dist):
-    # we will Hard-code Tabs:
-    # R           2Ts max = 
-    #   0- 50 km: 33
-    #  50-100 km: 56 
-    # 100-150 km: 80
-    # 150-200 km: 104
-    # 200-250 km: 128
+def make_approximation(freq, tPeak, Peaks, T1, T2, t100, correct_to_Max=False):
+    _y = np.log(Peaks)
+    try:
+        p = np.polyfit(tPeak, _y, 1)# we used natural logarithm
+    except TypeError:
+        return
     
-    if dist <= 50:
-        Tcoda = 33
-    elif 50 < dist <= 100:
-        Tcoda = 56
-    elif 100 < dist <= 150:
-        Tcoda = 80
-    elif 150 < dist <= 200:
-        Tcoda = 104
-    elif 200 < dist <= 250:
-        Tcoda = 128
-    else:
-        raise NotImplementedError("Must choose DIST to calc from range '1-3'")
-    ALPHA = ALPHA2 if dist > 100 else ALPHA1
+    # what we did: p[0] - наклон, p[1] - вес
+    k, b = p
     
-    return Tcoda, ALPHA
-
+    # y ≈ exp(-b) * exp(k * x)
+    new_x = np.arange(T1, T2+1)
+    new_y = np.exp(b) * np.exp(k * new_x)
+    
+    # also approximate from 0 to new_x[0]
+    new_x0 = np.arange(0, new_x[0])
+    new_y0 = np.exp(b) * np.exp(k * new_x0)
+    
+    # also calc A100
+    y100 = np.exp(b) * np.exp(k * t100)
+    
+    #=== fix Y-values, to make max(Peaks) == max(Y-value)
+    if correct_to_Max:
+        # find mean of first 5-maximums, not to use maybe 1 outliner
+        #max_Peak = Peaks.max()
+        ind = np.argsort(Peaks)
+        max_Peak = np.median(Peaks[ind][-5:])
+        
+        max_Y = new_y.max()
+        ###if max_Peak > max_Y:
+        diff = max_Peak - max_Y
+        new_y += diff
+        new_y0+= diff
+        # also += Y100 value
+        y100 += diff
+        
+    return new_x, new_y, y100, k, b, new_x0, new_y0
 
 
 def calculate(Freq, f1, f2, stream, 
-    seconds_E, seconds_P, seconds_S, dt, 
-    dt_P, dt_S, Settings, dist, Tcoda):#azBA=0):
+    seconds_E, seconds_P, seconds_S, 
+    dt, dt_P, dt_S, Settings, dist, Tcoda=None):#azBA=0):
     """ 
     Freq, f1, f2
     stream - a copy of 'slices' original STREAM object that saves all data
     seconds_E - сколько это в секундах относительно начала файла - время в очаге
     (всегда 0 если у нас REQUEST_WINDOW = (0, ...))
     
-    seconds_S - сколько прошло до S-волны в секундах от начала файла (или T0)
-    
-    расчет параметров коды - по горизонтальным компонентам """
+    seconds_S - сколько секунд до S-волны от начала файла (или T0) """
     
     # save original trace
     original_trace = stream[0].copy()
     T0 = original_trace.stats.starttime
     
-    #sr = original_trace.stats.sampling_rate # sampling rate, 100 Hz normally
-    sr = float("%.1f" % original_trace.stats.sampling_rate) #Why 1 digit after .
+    sr = float("%.1f" % original_trace.stats.sampling_rate) # 100 Hz normally
+    
+    if sr == 50.:
+        if Settings["verbose"]:
+            print("Lets not use Irkut-24 digitizer data!!")
+            return
     
     # stream must start at T0
     if abs(seconds_E - 0.) > 1:
         assert seconds_E == 0. , "\nseconds_E '%s' !=5" % (seconds_E)
-    # time of Coda
     
+    #===
     # according to [Aki 1980] [Pavlenko 2008] [Indus etc.]
     # нужно брать коду за фиксированныое время - например 40 с после Т0 (время в очаге)
     # однако для расстояний > 70 км, 40 сек будет раньше времени 2*Ts !!!
-    # поэтому по формуле нужно пересчитать амплитуду коды (например на 80 с)
-    # в амплитуду коды на 40с
-    # по формуле
-    # RMS(Coda at 80s) * D(f, 40) / D(f, 80)
-    # где D(f, t) - интенсивность кода-волн со временем t
     
-    # real 2*Ts
-    dt_Coda_shouldbe = dt + 2. * (dt_S - dt)
+    # time of Coda
+    dt_Coda = dt + Settings["koef"] * (dt_S - dt)
     
-    if not ABS:
-        # 2 * tS
-        dt_Coda = dt + Settings["koef"] * (dt_S - dt)
-    # время в очаге + 50 с ???
-    else:
-        # `dt_Coda` - is UTCDatetime obj that saves Absolute time of Coda-window
-        dt_Coda = dt + Tcoda
-    
-    # seconds
+    # seconds (начало и конец коды)
     seconds_Coda1 = dt_Coda - T0
     seconds_Coda2 = seconds_Coda1 + SD
     
-    # IMPORTANT UPDATE:
     # calc SD1 manually (if not set)
     SD1 = Settings['sd1']
     if SD1 == 0:
@@ -176,16 +160,18 @@ def calculate(Freq, f1, f2, stream,
     
     # check: S-window and Coda-window may intersects!
     if (seconds_Coda1 - seconds_S) < SD1:
-        print("\nWindow S and Coda intersects for %s!!!" % dt)
+        if Settings["verbose"]:
+            print("\nWindow S and Coda intersects for event `%s`!!!" % dt)
         return
+    
+    #============
+    # make Figure
+    fig, (ax1, ax) = plt.subplots(figsize=(21, 9), nrows=2, ncols=1, sharex=True)
+    
+    EVENT_NAME = "Dist = {:.0f} | Stream {}--{}. Freq {} Hz ({}-{})".format(dist, 
+        stream[0].stats.starttime, stream[0].stats.endtime, Freq, f1, f2)
+    fig.suptitle(EVENT_NAME, fontsize=14)
 
-    # get results for this filename at this freqs
-    if PLOT:
-        fig, ax = plt.subplots(figsize=(16, 9), nrows=1, sharex=True)
-        fig.suptitle("Dist = {:.0f} \tStream {}--{}. Freq {} Hz ({}-{})".format(dist, 
-            stream[0].stats.starttime, stream[0].stats.endtime, Freq, f1, f2), fontsize=14)
-    else:
-        axes = np.arange(stream.count())
     # будем считать
     result = []
     
@@ -201,7 +187,17 @@ def calculate(Freq, f1, f2, stream,
     
     trace = stream[0]
     
+    #===
+    # plot original signal
+    ax1.plot(original_trace.times(), original_trace.data, "g", lw=1., zorder=111,
+        label=trace.stats.channel)
+    # plot signal before filtering
+    ax1.plot(trace.times(), trace.data, "k", lw=0.5, zorder=222)#, alpha=0.75)
     
+    # will use absolute values
+    trace.data = np.abs(trace.data)
+
+    # useless check
     if trace.data.max() == trace.data.min():
         print("\nWarning: may we have here solid lines!!!!!!!!")
         return
@@ -209,141 +205,202 @@ def calculate(Freq, f1, f2, stream,
     # check SNR on filtered signal!
     # noise windows will always be = 3 second
     # calc at the end of the Coda-window!
-    SNR = calc_signal_noise_ratio(stream, dt, dt_Coda+SD, 3)
-    #SNR = calc_signal_noise_ratio(stream, dt, dt_Coda, 5)
+    #TODO: for small Epi-distances (less 20-30 km), must use smaller windows!
+    #TODO: must use several windows and see Noise at all this 
+    SNR = calc_signal_noise_ratio(trace, sr, dt, dt_Coda+SD, 3)
     
+    # save SNR
     result += [SNR]
     
     if SNR < Settings['minsnr']:
-        if Settings["verbose"]: 
+        if Settings["verbose"]:
             print("\nSNR for freq %s is too SMALL (%.1f)!..." % (Freq, SNR))
         return result
     
-    if PLOT:
-        color = 'g'
-        # original signal
-        ax.plot(original_trace.times(), original_trace.data, color, 
-            label=trace.stats.channel, lw=.25, zorder=111)
-        # plot filtered
-        ax.plot(trace.times(), trace.data, "k", lw=.5, zorder=222)
-        
-        # etc
-        
-        # mark time of Event, P and S time by vertical lines, start -- end
-        ax.axvline(x=seconds_E, linestyle="--", color="y", lw=2.) # Event
-        ax.axvline(x=seconds_P, linestyle="--", color="m", lw=0.25) # P
-        ax.axvline(x=seconds_P+SD1P, linestyle="--", color="m", lw=0.25) # P+SD1p
-        
+    # plot filtered
+    ax.plot(trace.times(), trace.data, "k", lw=1, zorder=222)
+    
+    # mark time of Event, P and S time by vertical lines, start -- end
+    for _ax in [ax1, ax]:
+        _ax.axvline(x=seconds_E, linestyle="--", color="y", lw=2.) # Event
+        _ax.axvline(x=seconds_P, linestyle="--", color="b", lw=0.5) # P
+        _ax.axvline(x=seconds_P+SD1P, linestyle="--", color="b", lw=0.5) # P+SD1p
         # S-window
-        ax.axvline(x=seconds_S, linestyle="--", color="k", lw=1) # S
-        ax.axvline(x=seconds_S+SD1, linestyle="--", color="k", lw=1) # S+SD1
+        _ax.axvline(x=seconds_S, linestyle="--", color="k", lw=1) # S
+        _ax.axvline(x=seconds_S+SD1, linestyle="--", color="k", lw=1) # S+SD1
         # mark coda
-        ax.axvline(x=seconds_Coda1, linestyle="-", color="r", lw=2.) # coda
-        ax.axvline(x=seconds_Coda2, linestyle="-", color="r", lw=2) # coda
-        
-        # anyway plot 2*TS marker
-        seconds_Coda_2ts = dt_Coda_shouldbe - T0
-        ax.axvline(x=seconds_Coda_2ts, linestyle=":", color="c", lw=2.5) # coda 2TS
+        _ax.axvline(x=seconds_Coda1, linestyle="-", color="r", lw=2.) # coda
+        _ax.axvline(x=seconds_Coda2, linestyle="-", color="r", lw=2) # coda
+    
     
     #===================================================================
     #=== все вычисления по данной компоненте
     
+    #=== Calculations here
+    
+    # get coda window to make envelope
+    envelope_part = trace.slice(starttime=dt_Coda, endtime=dt_Coda+SD)
+    envelope_times = envelope_part.times() + seconds_Coda1
+    
+    # get Peaks
+    window_len = int( math.ceil((2. / Freq * sr)/10) * 10 ) + 1# odd number
+    ind_peaks, _ = find_peaks(envelope_part, distance=window_len)
+    
+    tPeak, Peaks = envelope_times[ind_peaks], envelope_part[ind_peaks]
+    # fin MAXIMUM from peaks
+    maxPeak = Peaks.max()
+    
+    #===
+    # make linear approximation of logarithm values
+    result_approx = make_approximation(Freq, tPeak, Peaks, seconds_Coda1, seconds_Coda2, Tcoda)
+    if result_approx is None:
+        print("Error approximation for Freq `%.3f` and Event `%s`" % (Freq, EVENT_NAME))
+    else:
+        new_x, new_y, y100, _k, _b, new_x0, new_y0 = result_approx
+        
+    # plot approximation
+    _label = r'$y=%.5f * exp(%.5f * x)$' % (np.exp(_b), _k)
+    
+    ax.plot(tPeak, Peaks, "*r", markersize=5, alpha=0.75, zorder=99999)
+    ax.plot(new_x, new_y, "-r", lw=2., zorder=7777, label=_label)
+    # result of approximation from 0 to new_x[0]
+    ax.plot(new_x0, new_y0, ":r", lw=1.2, zorder=7777)
+    
+    
+    ax.plot(Tcoda, y100, "or", markersize=12, markeredgecolor="w", alpha=0.5, zorder=9999)
+    ax.legend(loc="upper right")
+    ax1.legend(loc="upper right")
+    
+    #===
     # получить сами массивы данных (отфильтрованных)
+    
+    # P-window data
+    # check that P-window and S-window do not intersects!
+    if (seconds_S - seconds_P) <= SD1P:
+        #if Settings["verbose"]:
+        print("\nWindow S and P intersects for %s!!!" % dt)
+        #return
+        Pwindow = None
+    else:
+        Pwindow = stream.slice(dt_P, dt_P+SD1P)[0].data
     
     # S-window data
     Swindow = stream.slice(dt_S, dt_S+SD1)[0].data
     
     # Coda-window data
-    coda_window = stream.slice(dt_Coda, dt_Coda+SD)[0].data
+    try:
+        coda_window = stream.slice(dt_Coda, dt_Coda+SD)[0].data
+    except IndexError as e:
+        print("\n %s" % e)
+        return
     
     if not (coda_window.size == SD*sr + 1):
         if not (coda_window.size == SD*sr):
             if not (coda_window.size == SD*sr -1):
-                print("Size of Coda-window is %s (must be = %s)" % (coda_window.size, (SD*sr + 1)))
+                if Settings["verbose"]:
+                    print("\n\tSize of Coda-window is %s (must be %s)" % (coda_window.size, (SD*sr + 1)))
                 # just warning...
-                #return
-    
-    #=== Calculations (normally on the Envelope)
-    
-    # uses "ENVELOPE"
-    
-    # envelope of S-bulk window (Hilbert transform)
-    valuesS = obspy.signal.filter.envelope(Swindow)
-    
-    # original values for Coda
-    valuesC = coda_window
+                return
     
     #===========================================================================
     # *** Crucial place for calculations ***
+    # Add Qp calculation
     
-    # just Max-Min (may lead to Very bad results and too low correlation!!!)
-    S_window_result = valuesS.max() - valuesS.min()
+    # RMS of P-bulk-window
+    if Pwindow is not None:
+        P_window_result = Pwindow.max()#RMS(Pwindow)
+    else:
+        P_window_result = None
+    result.append(P_window_result)
+    
+    #===
+    # S-waves
+    
+    # RMS of S-bulk-window
+    #S_window_result = RMS(Swindow) * 2.5
+    # не используем RMS, а максимальную амплитуду в группе S-волн
+    S_window_result = Swindow.max()
     result.append(S_window_result)
+    
+    #mark it!
+    ax.plot(seconds_S, S_window_result, "or", markersize=12, markeredgecolor="w", 
+        alpha=0.75, zorder=9999)
     
     # for Coda window (original filtered amplitudes)
     # сумма квадратов на кол-во значений (RMS - root mean square)
     #NO! just calc RMS and for S-waves should * 2 (or 2.5 or 3)
-    coda_value = RMS(valuesC) # 2 * RMS
-    #coda_value = valuesC.max()
     
+    #coda_value = RMS(coda_window) # 2 * RMS???
+    coda_value = coda_window.max()
+    
+    if not maxPeak == coda_value:
+        print("\n\tWARNING:")
+        print("Must be equal %.5f and %.5f" % (maxPeak, coda_value))
+    
+    # save maximum value in Coda-window
     result.append(coda_value)
+    
+    # mark coda value
+    ax.plot(seconds_Coda1, coda_value, "oc", markersize=12, markeredgecolor="w", alpha=0.75, zorder=9999)
+    
+    # save RMS!
+    #result.append(coda_value)
+    # will uase no RMS(coda), but A40 (or A100 or smth.)
+    result.append(y100)
+    
+    # also save koef of slope k
+    result.append(_k)
     #===========================================================================
     
-    # plot details
+    # plot ec. details
+    y_pos = original_trace.data.max() / 2
+    
+    #=== selected windows
+    # plot S-window (Swindow)
+    S_time = trace.times()[:Swindow.size] + seconds_S
+    ax.plot(S_time, Swindow, "-r", lw=2.)
+    
+    # Coda (coda_window)
+    Coda_times = trace.times()[:coda_window.size] + seconds_Coda1
+    ax.plot(Coda_times, coda_window, ":r", lw=1.2)
+    
+    # plot SNR value text
+    ax.text(x=seconds_E+0.5, y=y_pos, s="%.1f" % SNR) # SNR
+    
+    # limits
+    ax.set_xlim(seconds_E - 2, seconds_Coda2 + 2)
+    ax1.set_ylim(original_trace.data.min(), original_trace.data.max())
+    ax.set_ylim(0, trace.data.max()*1.5)
+    
+    ax.legend()
+    
+    #plt.tight_layout()
+    
     if PLOT:
-        y_pos = original_trace.data.max() / 2
-        
-        #=== envelopes
-        # plot envelope of S-window (Swindow)
-        S_time = trace.times()[:Swindow.size] + seconds_S
-        ax.plot(S_time, valuesS, "--r", lw=2.)
-        
-        # Coda envelope (coda_window)
-        #Coda_times = trace.times()[:coda_window.size] + ABS
-        Coda_times = trace.times()[:coda_window.size] + seconds_Coda1
-        ax.plot(Coda_times, coda_window, "--r", lw=2.)
-        
-        #=== calc values
-        # calc and mark MAX-MIN of envelope
-        max_min_bulk = Swindow.max() - Swindow.min()
-        
-        # coda amplitude:
-        coda_amplitude = coda_window.max() - coda_window.min()
-        
-        #=== Texts:
-        # plot SNR value
-        ax.text(x=seconds_E+2, y=y_pos, s="%.1f" % SNR) # SNR
-        
-        # plot RMS value of bulk-window
-        ax.text(x=seconds_S+SD1/2, y=y_pos, s="RMS(bulk)=%.1f (Max-min=%.1f)" % (result[1], max_min_bulk)) # RMS(Swindow)
-        
-        # plot RMS value of Coda-window
-        ax.text(x=seconds_Coda2-10, y=y_pos, s="RMS(coda)=%.1f (Max-min=%.1f)" % (result[2], coda_amplitude)) # RMS(Coda_window)
-        
-        
-        ax.set_xlim(seconds_E - 5, seconds_Coda2 + 5)
-        ax.set_ylim(original_trace.data.min(), original_trace.data.max())
-        
-        ax.legend()
-
         plt.show()
-        '''
-        save_to_dir = os.path.join("img", str(stream[0].stats.starttime)[:19].replace(":", "-"))
+    else:
+        # just save Figure
+        save_to_dir = os.path.join("img", STATION, str(stream[0].stats.starttime)[:19].replace(":", "-"))
         if not os.path.exists(save_to_dir): os.makedirs(save_to_dir)
-        outfilename = os.path.join(save_to_dir, "{}_{}.png".format(STATION, Freq))
+        outfilename = os.path.join(save_to_dir, "{}_{}_{}__{}s.png".format(STATION, Settings["channel"], Freq, SD))
         plt.savefig(outfilename)
-        '''
-        plt.close()
+
     # the end
     return result
 
 
 def parse_command_line_args(args=None):
-    parser = argparse.ArgumentParser(description='CodaNorm arguments that override default settings')
+    """ parse command line arguments """
+    description = 'CodaNorm arguments that override default settings'
+    parser = argparse.ArgumentParser(description=description)
     
     # argument on which channel to calc
     parser.add_argument("-c", "--channel", help="Channel to use (N, E, Z).", 
         choices=CHANNELS, nargs='+')
+    
+    # add option to calc with another coda window length
+    parser.add_argument("--sd", type=int, 
+        help="Specify length of Coda-window (in seconds)")
     
     # maybe we want to plot anyway
     parser.add_argument('--plot', help='Plot results', action='store_true')
@@ -382,6 +439,11 @@ if __name__ == '__main__':
     if args.channel is not None:
         Settings['channel'] = args.channel[0]#  or Settings['channel']
     
+    # may want another SD:
+    if args.sd is not None:
+        Settings["sd"] = args.sd
+        SD = args.sd
+    
     # verbose or not
     Settings["verbose"] = True if args.verbose else False
     
@@ -389,7 +451,7 @@ if __name__ == '__main__':
         for k, v in Settings.items():
             print(k, v)
         # nice wait
-        _N = 10
+        _N = 3
         while True:
             if _N <= 0: break
             # nice output
@@ -400,10 +462,13 @@ if __name__ == '__main__':
             time.sleep(1)
             _N -= 1
         print()
+        print("\t...started")
     # ======
     
     # get name if input file
     STATION = Settings["station"]
+    
+    # get stations coords, Input filename and Data MSEED volume
     Settings['station_lat'], Settings['station_lon'], InputFile, DATAFILE = STATIONS[STATION]
     
     # global variables here
@@ -422,16 +487,17 @@ if __name__ == '__main__':
     KOEF = Settings["koef"] # KOEF
     
     # ABSolute time for start of Coda-window or 2 * Ts or smth
-    ABS = Settings["absolute"]
-    
-    # geomettrical spreading params:
-    R1 = Settings["r1"]
-    R2 = Settings["r2"]
-    ALPHA1 = Settings["alpha1"]
-    ALPHA2 = Settings["alpha2"]
+    ABS = False#Settings["absolute"]
     
     # what data to fetch (we will use only 1 channel)
-    net, sta, loc, cha = "BR", STATION, "00", "?H%s" % Settings["channel"]
+    #which_channel = "?H%s" % (Settings["channel"] if not Settings["rms"] else "?")
+    which_channel = "%s" % (Settings["channel"] if not Settings["rms"] else "?")
+    
+    # NETWORK station etc
+    #net, sta, loc, cha = "BR", STATION, "00", which_channel
+    # network, station, lcoation, channel
+    net, sta, loc, cha = "XQ", STATION, "", which_channel
+    
     
     # read data Stream
     DATAFILE = os.path.join("data", STATION, DATAFILE)
@@ -470,6 +536,9 @@ if __name__ == '__main__':
         # обрабатывать данные по событию
         parts = dict(zip(names, line))
         
+        # check Energy
+        ##########if parts["K"] < 9: continue
+        
         # считать расстояние, азимуты от станции до события
         lat, lon = parts["LAT"], parts["LON"]
         
@@ -481,44 +550,46 @@ if __name__ == '__main__':
             print(e)
             dist = 9999
         # Distance must be in kilometers (not in m)
-        dist /= 1000. 
+        dist /= 1000.
         
         # Distance checking...
-        if dist > 250: continue
+        #if dist > 500: continue
         
-        #TODO: no need to hard-code 60 and 100; use vars R1 and R2 instead
-        real_dist = 0# in order not to use same VAR as dist
-        real_dist = dist
-
-        # if less then 60 km
-        if R1 < dist <= R2:
-            # если расстояния от 60 до 100 км, геом расхождение будет 60 ^ -1
-            dist = R1
+        # where the Coda will start..
+        Tcoda = Settings["Tcoda"]
         
-        # get Tabs and ALPHA param for this distance:
-        Tcoda, ALPHA = get_Tabs_and_alpha(real_dist)
+        #== make UTC datetime(s)
         
-        # make UTC datetime(s)
-        DT = UTCDateTime(parts["DATE_E"] + "T" + parts["TIME_E"], precision=2)
-        DT_P = UTCDateTime(parts["DATE_E"] + "T" + parts["TIME_P"], precision=2)
+        # time in source
+        DT = UTCDateTime(str(parts["DATE_E"]) + u"T" + str(parts["TIME_E"]), precision=2)
+        #DT = UTCDateTime(unicode(parts["DATE_E"]) + u"T" + unicode(parts["TIME_E"]), precision=2)
+        
+        # time-P maybe `None` somewhere... at STDB old Geon data
+        # just skip ip
+        if parts["TIME_P"].upper() == "NONE":
+            continue
+        else:
+            DT_P = UTCDateTime(parts["DATE_E"] + "T" + parts["TIME_P"], precision=2)
+        
         # may be no value for S-obset
         if parts["TIME_S"] == "None":
             # calc from time-P
             DT_S = DT + (DT_P - DT) * CONST_Tp_Ts
         else:
             DT_S = UTCDateTime(parts["DATE_E"] + "T" + parts["TIME_S"], precision=2)
-        
 
-        #WARNING: for UZR (A-7b) move P-S-onsets window -0.5s
-        DT_P = DT_P - 0.25
-        DT_S = DT_S - 0.25
         # check time valid
         assert DT <= DT_P <= DT_S, "Error (%s <= %s <= %s) 'DT <= DT_P <= DT_S' for %s" % (DT, DT_P, DT_S, line)
         
-        #=== Fetch data
-        # request this data from MSEED volume (in seconds)
-        # full length of seismogramm no more then Tabs + Coda_length (for ex.: 40s+40s = 80s)
-        SEISMOGRAMM_MAX_LEN = Tcoda + SD + 1
+        #=== Fetch data: request this waveforms from MSEED volume (in seconds)
+        
+        if ABS:
+            SEISMOGRAMM_MAX_LEN = Tcoda + SD + 1
+        else:
+            # calc `Tcoda` as 2*Ts
+            SEISMOGRAMM_MAX_LEN = (DT_S - DT) * KOEF + SD + 1 # KOEF == 2 normally
+        
+        # we will fetch data for this times:
         REQUEST_WINDOW = (0, SEISMOGRAMM_MAX_LEN) # after: Coda starts at 40s + 40 = 120
         
         # Retrieve data
@@ -531,45 +602,87 @@ if __name__ == '__main__':
         # Fetch data
         stream = get_waveforms(**kwargs2)
         
+        # maybe duplicate files?
+        if stream.count() == 6: stream.merge(method=1)
+        
         if stream.count() == 0:
-            if Settings["verbose"]: print("\nData missing for event %s" % DT)
-            #_f = open(r"d:\Work\python\_new\CodaNorm\Missing.txt", "a")
-            #_f.write("%s\n" % DT)
-            #_f.close()
+            if Settings["verbose"]: print("\nNo data for event `%s`" % DT)
             continue
         
-        # detrend (this includes removing mead value)
-        stream.detrend("linear")
+        # must be all 3 components
+        if Settings["rms"] and not stream.count() == 3:
+            print("\nERROR: must be 3 channel to make RMS compomnent!")
+            continue
         
-        # simulate or not:
+        
+        # SMTH stupid when working with IRIS 20 Hz data TLY
+        if stream.count() > 1:
+            _starttimes = [tr.stats.starttime for tr in stream]
+            #assert _starttimes[0] == _starttimes[1] == _starttimes[2], "stream: %s" % stream
+            if not (_starttimes[0] == _starttimes[1] == _starttimes[2]):
+                print("stream `%s` is not aligned!" % stream)
+                continue
+            # also check endtimes!!!
+            #_endtimes = [tr.stats.endtime for tr in stream]
+            #assert _endtimes[0] == _endtimes[1] == _endtimes[2]
+        
+        # detrend (this includes removing mead value)
+        stream.detrend('demean')
+        
+        #=== Remove response first, then make RMS componet etc
+        # remove response or not
         if Settings["simulate"]:
-            # for TLY
-            if STATION == "TLY":
-                inv = read_inventory("resp/IRIS__TLY__2003_12.xml")
-                stream.remove_response(inventory=inv, output="VEL", plot=False)
-            elif STATION == "MXMB":
-                inv = read_inventory("resp/BR__MXMB_7hr.xml")
-                # pre-filter outside of desired frequency range
-                pre_filt = [0.01, 0.1, 30, 50]
-                stream.remove_response(inventory=inv, output="VEL", plot=False,
-                    pre_filt=pre_filt)
-            elif STATION == "UUDB":
-                respfile = "resp/BR_UUDB__Centaur.resp"
-                inv = read_inventory(respfile)
-                stream.remove_response(inventory=inv, output="VEL", plot=False)
-            elif STATION == "KELR":
-                respfile = "resp/BR_KELR__CMG-40T.resp"
-                inv = read_inventory(respfile)
-                pre_filt = [0.01, 0.1, 20, 25]
-                stream.remove_response(inventory=inv, output="VEL", plot=False, pre_filt=pre_filt)
-            else: pass
-            # do it
-            #stream.remove_response(inventory=inv, output="VEL", plot=False)
-
+            try:
+                stream = remove_response(stream, STATION)
+            except ValueError as e:
+                print("\tERROR: remove response failed: %s. Sream `%s`" % (e, stream))
+                raw_input()
+                continue
+        
+        #===
+        
+        if Settings["rms"]:
+            # **2
+            __N = np.power(stream.select(channel='N')[0].data, 2)
+            __E = np.power(stream.select(channel='E')[0].data, 2)
+            __Z = np.power(stream.select(channel='Z')[0].data, 2)
+            # R - result of calculations
+            RMS_component = np.sqrt( (__N + __E + __Z) / 3 )
+            # remove 1st 2 components
+            for _ in range(2): stream.pop(0)
+            stream[0].data = RMS_component
+            stream[0].stats.channel = "RMS"
+            #===
+            
+        assert stream.count() == 1, "Must be 1 trace! we have: %s" % stream
+        
+        #=============
         #== считать окна, для времен вступлений, 1 раз - для всех частот
         # начало и конец файла
         T0, Tend = stream[0].stats.starttime, stream[0].stats.endtime
-         
+        
+        # this check is useless:
+        # must check that:
+        # 1) P- and S-window is here: Time of P- and S- start and end we have
+        # 2) Coda window is all in this data: start and end
+        
+        # DT DT_P DT_S - UTCatetime object that saves start of this waves (DT id T0)
+        
+        # check that P-wave window we have here...
+        if (DT_P < T0) or (DT_P > Tend):
+            # if one of this - not enough data!!!
+            err_msg = "\nP-window must start after T0 and end before Tend"
+            if Settings["verbose"]: print(err_msg)
+            continue
+        
+        # check that S-window we have overall
+        if (DT_S < T0) or (DT_S > Tend):
+            # if one of this - not enough data!!!
+            err_msg = "\nS-window must starts after `T0` and ends before `Tend`"
+            if Settings["verbose"]: print(err_msg)
+            continue
+        
+        # ! check we will make: T0 must be EXACTLY what we fetched...
         if not T0 == t1:
             # first check the difference...
             diff = abs(T0 - t1)
@@ -580,30 +693,6 @@ if __name__ == '__main__':
                     print("\nStream must start at the same time as T1 (%s != %s)!!! \nDiff = %s" % (T0, t1, diff))
                 continue
         
-        # also check EndTime
-        if not Tend == t2:
-            # check the difference...
-            diff = abs(Tend - t2)
-            if diff < 1: pass
-            else:
-                print("\nStream must end at the same time as T2 (%s != %s)!!! \nDiff = %s" % (Tend, t2, diff))
-                continue
-        
-        # check all traces start at the same time
-        for tr in stream:
-            # check diff
-            diff = T0 - tr.stats.starttime
-            if diff > 0:
-                print("T0 != tr.stats.starttime : (%s and %s)" % (T0, tr.stats.starttime))
-                print("Diff = %s" % diff)
-                raw_input()
-                continue
-        
-        # но могут быть и 2 сейсмограммы. выбрать более длинную или 1st?
-        if stream.count() > 1:
-            #print("\nUsing FIRST stream instead!!!")
-            stream = stream[:1]
-        
         #=== Время в очаге T0: сколько это в секундах относительно начала файла?
         # время в очаге
         seconds_E = DT - T0
@@ -611,6 +700,13 @@ if __name__ == '__main__':
         seconds_P = DT_P - T0
         # S-wave onset
         seconds_S = DT_S - T0
+        
+        #===
+        # WARNING! recalc distance according to formula 8 * (Ts - Tp + 0.2)
+        ##real_dist = 8 * (seconds_S - seconds_P + 0.2)
+        ##if Settings["verbose"]:
+        ##    print("\nReal_dist = %.2f, dist was %.2f" % (real_dist, dist))
+        ##dist = real_dist
         
         #===============================================================
         # для всех частот считать...
@@ -629,10 +725,17 @@ if __name__ == '__main__':
                 result = calculate(Freq, f1, f2, stream.copy(),
                     seconds_E, seconds_P, seconds_S, 
                     DT, DT_P, DT_S,
-                    Settings, real_dist or dist,#if real_dist == 0 will use dist
+                    Settings, dist,#if real_dist == 0 will use dist
                     Tcoda
                 )
+                plt.close()
             #except BaseException as e:
+            #    print("!"*33)
+            #    print(e)
+            #    print("!"*33)
+            #    print()
+            #    continue
+            #    
             except KeyboardInterrupt:
                 print("Interrupted by user")
                 PLOT = False
@@ -647,47 +750,51 @@ if __name__ == '__main__':
                 continue
             
             # parse results
-            SNR, P_Z, C_Z = result
+            # SNR, P-value, S-value, Coda-value
+            SNR, P_value, S_value, C_value, Y100, _k = result
 
             #====================
             # считать логарифм отношения Амплитуды прямой волны (с коррекцией на геом. расхождение) и коды 
             
-            # also for distance R <60 and 60-100km, we use ALPHA = -1: R^-1 (and 60^-1 for 60-100km)
-            
-            # geom. spreading Z(R)
-            Z_R = np.power(float(dist), ALPHA)
-            
             #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             # most important calculation: LN(As * Z(R) / Ac)
-            LN_As_Ac = np.log( P_Z / (C_Z * Z_R ) )
+            #########LN_As_Ac = np.log( P_Z / (C_Z * Z_R ) )
+            #LN_Ap_Ac = np.log( P_value / C_value )
+            LN_Ap_Ac = np.log( P_value / Y100 )
+            
+            #LN_As_Ac = np.log( S_value / C_value )
+            LN_As_Ac = np.log( S_value / Y100 )
             #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             
             calc_freq_values.append( LN_As_Ac )
             
-            # save distance-Amplitude (LN(As/Ac with ALPHA correction) values
+            # save distance-Amplitude - Ap/As/Ac/Y100 values
             datapath = os.path.join("values", STATION)
             if not os.path.exists(datapath): os.makedirs(datapath)
             # filename: STA_FREQ_CH_vals.txt
-            datafilename = "{0}_{1:0.2f}_{2}_vals_SD{3}.txt".format(STATION, Freq, Settings["channel"], SD)
+            datafilename = "{0}_{1:0.2f}_{2}_vals_SD{2}__ABS_{3}_T{4}.txt".format(STATION, Freq, SD, ABS, 0 if Tcoda is None else Tcoda)
             datafilename = os.path.join(datapath, datafilename)
             if not os.path.exists(datafilename):
                 # create datafile and add Header(s)
                 _dataf = open(datafilename, "w")
-                _headers = "\t".join("DATE_E TIME_E LAT LON K CHA ALPHA DIST REAL_DIST SNR P_Z C_Z LN".split())
+                _headers = "\t".join("DATE_E TIME_E LAT LON K CHA DIST AZab SNR Ap As Ac Y100 LN(Ap/Ac100) LN(As/Ac100) _k".split())
                 _dataf.write(_headers + "\n")
                 _dataf.close()
             
-
             with open(datafilename, "a") as _dataf:
-                # write idE, idDir, DATE_E, TIME_E, LAT, LON, K, CHA, ALPHA, SNR, P_Z, C_Z, LN
+                # write idE, idDir, DATE_E, TIME_E, LAT, LON, K, CHA, SNR, P_value, S_value_ C_value, C_Z, LN
                 s = "{DATE_E}\t{TIME_E}\t{LAT:.3f}\t{LON:.3f}\t{K:.1f}\t".format(**parts)
-                s += "{0}\t{1}\t".format(Settings["channel"], ALPHA)
-                # distance: real and for calc.
-                s += "%.1f\t%.1f\t" % (dist, real_dist)
-                # append results (SNR, P_Z, C_Z)
-                s += "\t".join(["%.3f"%_r for _r in result])
-                # append final resultL LN(As/Ac with Alpha correction)
-                s += "\t%.3f" % LN_As_Ac
+                s += "{0}\t".format(Settings["channel"])# Channel Name
+                # distance: real and for calc. + Azimuth
+                s += "%.1f\t%.1f\t" % (dist, azAB)
+                # append results (SNR, P_value, S_value, C_value, A100)
+                s += "\t".join(["%.5f"%_r for _r in result])
+                
+                # append final resultL LN(As/Ac)
+                s += "\t%.4f\t%.4f" % (LN_Ap_Ac, LN_As_Ac)
+                
+                # slope of coda exponent _k
+                s += "\t%.4f" % _k
                 
                 _dataf.write(s + "\n")
                 _dataf.close()
@@ -695,17 +802,11 @@ if __name__ == '__main__':
             #=== calculations ended
             #===========================================================
             
-        # after calculations, restore real distance value
-        dist = real_dist
-        
         # сохранить пары значений (расстояние_в_км, Логарифм_отношения_по_P)
         R.append( {dist: calc_freq_values} )
     
     # finished for all events from Catalog
     #===========================================================================
-    
-    # stop for now
-    sys.exit(0)
     
     print()
     print("Results:")
@@ -715,10 +816,22 @@ if __name__ == '__main__':
     for freq_num, Freq in enumerate(Freqs):
         # remove null values in list
         R = [r for r in R if r.values() != [[]] ]
-        # get values
-        x = np.array( [r.keys()[0] for r in R] )
-        # for freq #1
-        y = np.array( [r.values()[0][freq_num] for r in R] )
+        print()
+        print('R')
+        print(R)
+        print()
+        print()
+        
+        # get values for x and y
+        
+        #x = np.array( [r.keys()[0] for r in R] )
+        #y = np.array( [r.values()[0][freq_num] for r in R] )
+        
+        x, y = [], []
+        for r in R:
+            for k, v in r.items():
+                x += [k]
+                y += [v[freq_num]]
         
         # кое-где у нас 0 в y - убрать соотв x
         _indices = np.where(y != 0)
@@ -729,12 +842,19 @@ if __name__ == '__main__':
         koef_pears, p = pearsonr(x, y)
         
         # calc regression (polyfit)
-        m, b = np.polyfit(x, y, 1)
+        try:
+            m, b = np.polyfit(x, y, 1)
+        except TypeError:
+            print("linear fitting error: %s (frequency=%.2f Hz). Skipping..." % (e, Freq))
+            continue
         Y = m * x + b
-        #print x.size,
         
         # calc by ROBUST method
-        a, b2 = linear_fit(y, x)
+        try:
+            a, b2 = linear_fit(y, x)
+        except BaseException as e:
+            print("robust fitting error: %s" % e)
+            a, b2 = 1, 0
         Y2 = a * x + b2
         
         # plot Linear regr. x-y
@@ -749,8 +869,6 @@ if __name__ == '__main__':
             label=r"$y=%.5f x + %.5f$" % (a, b2))
         
         ax.legend()
-        #ax.set_ylim(-5, 0)
-        #ax.set_xlim(0, 80)
         
         # Далее рассчитать сами значения добротности Q
         V = Settings['vs']# if CALCQ == "P" else Settings['vs']
@@ -760,17 +878,27 @@ if __name__ == '__main__':
         # 2nd method - Robust mean
         Q2 = -1 * np.pi * Freq / (V * a)
         
+        # insteadn of printing, save these values
+        outpfname = "Qvalues_{}_SD{}.txt".format(STATION, SD)
+        if not os.path.exists(outpfname):
+            with open(outpfname, "w") as _f:
+                # header:
+                # FREQ  Q RobustQ  Corr N
+                _f.write('\t'.join("CHANNEL FREQ Q RobustQ Corr N".split()) + "\n")
+
+        _f = open(outpfname, "a")
         
-        try:
-            print('%.1f\t%.1f RobustQ=\t%.1f\tCorr= %.3f\tN= %d' % (Freq, Q, Q2, koef_pears, x.size))
-        except TypeError:
-            print("'%s' hz freq:\terror calc on..." % Freq)
+        # write values
+        s = '%s\t%.2f\t%.1f\t%.1f\t%.3f\t%d\n' % (Settings["channel"], Freq, Q, Q2, koef_pears, x.size)
+        _f.write(s)
+        print(s.strip())
+        _f.close()
         
         # save to img/STA/ folder
         save_to_dir = os.path.join("img", STATION)
         if not os.path.exists(save_to_dir): os.makedirs(save_to_dir)
-        outfilename = os.path.join(save_to_dir, "{0:02d}__{1}_{2}_{3}.png".format(freq_num+1, STATION, Settings["channel"], int(Freq)))
-        
-        plt.show()
+        outfilename = os.path.join(save_to_dir, "{0:02d}__{1}_{2}_{3}__{4}s__ABS-{5}_T{6}.png".format(freq_num+1, STATION, Settings["channel"], int(Freq), SD, ABS, 0 if Tcoda is None else Tcoda))
+        plt.savefig(outfilename)
+        #plt.show()
         plt.close()
 

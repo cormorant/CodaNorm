@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-#from __future__ import division
+from __future__ import division
 
 """
 Move here code from CodaNorm - for simplicity reason. 
@@ -18,6 +18,8 @@ import numpy as np
 
 
 from statsmodels.robust.robust_linear_model import RLM
+
+from obspy import read_inventory
 
 
 def linear_fit(y, x, m=None, method='robust', Model=RLM):
@@ -40,6 +42,18 @@ def linear_fit(y, x, m=None, method='robust', Model=RLM):
         return m, res.params[0]
 
 
+def remove_response(stream, station, respfile, pre_filt=[0.001, 0.05, 35, 50], output="VEL"):
+    """ get physycal mkm/s units with pre-filter outside of desired frequency range
+    pre_filt was [0.001, 0.05, 30, 50] """
+    
+    inv = read_inventory(respfile)
+    stream.remove_response(inventory=inv, output=output, plot=False, pre_filt=pre_filt)
+    
+    # make physical units mkm/s
+    for tr in stream: tr.data *= 1e6
+    return stream
+
+
 def read_settings(config_filename="coda.conf", section="main"):
     config = configparser.ConfigParser()
     config.read(config_filename)
@@ -57,19 +71,20 @@ def read_settings(config_filename="coda.conf", section="main"):
     Settings['channel'] = config.get(section, "channel")
     
     # read INT value
-    for item in ("sd", "sd1", "minsnr", 'corners', "r1", "r2"):
+    for item in ("sd", "sd1", "minsnr", 'corners', "Tcoda"):
         Settings[item] = config.getint(section, item)
     
     # read float values
-    for item in ("station_lat", "station_lon", 'koef', "vp", "vs", 'alpha1', 'alpha2'):
+    for item in ("station_lat", "station_lon", 'koef', "vp", "vs"):
         try:
             Settings[item] = config.getfloat(section, item)
         except configparser.NoOptionError:
             Settings[item] = 0
     # freqs
     Settings["freqs"] = list(map(float, config.get(section, 'freqs').split()))
-    # plot, rotate? (bool)
-    for item in ("plot", 'simulate', "absolute"):#"rotate", 
+    
+    # read boolean values
+    for item in ("plot", 'simulate',  "rms"):#"rotate", "absolute", "envelope",
         Settings[item] = config.getboolean(section, item)
     return Settings
 
@@ -79,26 +94,9 @@ def RMS(array, power=2):
     return np.sqrt(np.mean(array ** power))
 
 
-'''
-def get_data_for_window(stream, dt1, dt2):
-    """ just get em from data array by seconds. Use slice() method instead! """
-    trace = stream[-1]# we use Z channel only
-    
-    # trim trace from start (P-wave) to end (P-onset + SD)
-    newtrace = trace.copy()
-    newtrace.trim(dt1, dt2)
-    
-    # return data
-    return newtrace.data
-'''
-
-def calc_signal_noise_ratio(stream, dt, dt2, sd):
+def calc_signal_noise_ratio(trace, sr, dt, dt2, sd):
     """ calc singal-to-noise ratio 
     Take window for noise at the same time as Time Of Event"""
-    # use 1 channel only
-    trace = stream[-1]
-    
-    sr = float("%.1f" % trace.stats.sampling_rate)
     
     # slice trace (5 seconds before and 5 after P waves)
     newtrace = trace.slice(dt, dt2)
@@ -106,7 +104,8 @@ def calc_signal_noise_ratio(stream, dt, dt2, sd):
     # take first N seconds of this data for noise, and last N seconds - signal
     # seconds to samples: * sr
     index = int(sd * sr)
-    noise = newtrace.data[:index]
+    #noise = newtrace.data[100:index+100]# plus one sec
+    noise = newtrace.data[int(sr):index+int(sr)]# add one sec
     signal = newtrace.data[-index:]
     
     assert noise.size > 20
@@ -146,25 +145,3 @@ def load_stations_from_settingsfile(config_filename="coda.conf", section="statio
 
 #load_stations("stations.dat")
 STATIONS = load_stations_from_settingsfile()
-
-
-
-"""
-SD (ZRHB)
-SD1=1 for dist=10 -- 23
-SD1=2 for dist=15 -- 33
-SD1=3 for dist=30 -- 47
-SD1=4 for dist=45 -- 58
-SD1=5 for dist=53 -- 75
-SD1=6 for dist=69 -- 89
-SD1=7 for dist=100-- 98
-SD1=8 for dist=102-- 99
-SD1=9 for dist=119-- 130
-SD1=10 for dist=136- 149
-SD1=11 for dist=153- 165
-SD1=12 for dist=156
-SD1=13 for dist=192
-SD1=14 for dist=188- 206
-SD1=15 for dist=197- 209
-SD1=16 for dist=217- 237
-"""

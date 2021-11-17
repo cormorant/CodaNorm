@@ -1,15 +1,17 @@
-CodaNorm v.0.2
+CodaNorm v.0.3
 ===
 
 **a software package for the body-wave attenuation calculation by coda-normalization method**
 
+Update 2020-06-25: now CodaNorm supports Python3. Big changes in codebase.
+
+Update 2021-11-17: Simple calculating amplitudes of coda at fixed time lapse. First stable version. Calculates both P- and S-amplitudes relation to coda.
 
 ### Abstract
 
 The software package CodaNorm is an open source seismological software. It consists of two separate utilities: a converter baikal2gse allows the conversion of the seismic waveforms of the regional seismic station networks in Southern Siberia and Yakutia to the GSE2 format and the program CodaNorm, designed to estimate the seismic wave attenuation of local and regional earthquakes and explosions using the extended coda-normalization method for different frequency ranges.
 CodaNorm program allows to calculate the seismic quality factor using the coda-normalization method [Aki, 1980]. 
 
-Update 2010-06-25: now CodaNorm supports Python3. Big changes in codebase.
 
 ### Motivation and significance
 
